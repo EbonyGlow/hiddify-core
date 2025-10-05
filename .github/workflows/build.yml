@@ -113,6 +113,34 @@ jobs:
         run: |
           make -j$(($(nproc) + 1)) ${{ matrix.job.target }}
 
+      - name: Validate Android 16KB Page Size
+        if: startsWith(matrix.job.target,'android')
+        run: |
+          set -euo pipefail
+          echo "Unzipping AAR..."
+          rm -rf bin/aar
+          unzip -q bin/libcore.aar -d bin/aar
+          echo "Checking .so alignment (>= 0x4000) in LOAD segments..."
+          failed=0
+          shopt -s nullglob
+          for so in bin/aar/jni/*/*.so; do
+            echo "Inspecting $so"
+            # For each LOAD segment, ensure Align >= 0x4000
+            while read -r align; do
+              # align comes like: 0x200000 or 0x4000, compare as hex using bc
+              if [ $(printf "%d" $((align))) -lt $(printf "%d" $((0x4000))) ]; then
+                echo "ERROR: $so has LOAD segment alignment $(printf "0x%X" ${align}) < 0x4000"
+                failed=1
+                break
+              fi
+            done < <(readelf -lW "$so" | awk '/LOAD/ { for(i=1;i<=NF;i++){ if($i=="Align"){ print strtonum($(i+1)); break } } }')
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "Validation failed: some .so do not meet 16KB page size alignment"
+            exit 1
+          fi
+          echo "Validation passed."
+
       - name: zip
         run: |
           tree 
